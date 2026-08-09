@@ -9,25 +9,31 @@ namespace MHServerEmu.Games.Events
     /// </summary>
     public class ScheduledEventPool
     {
-        private readonly Dictionary<Type, IObjectPool> _eventPools = new();
+        private static int _numRegisteredEventTypes = 0;
+
         private readonly EventListPool _eventListPool = new();
+
+        private IObjectPool[] _eventPools;
 
         /// <summary>
         /// Constructs a new <see cref="ScheduledEventPool"/> instance.
         /// </summary>
-        public ScheduledEventPool() { }
+        public ScheduledEventPool()
+        {
+            ResizeEventPoolArray();
+        }
 
         /// <summary>
         /// Retrieves or creates a new <see cref="ScheduledEvent"/> instance of subtype <typeparamref name="T"/>.
         /// </summary>
         public T Get<T>() where T: ScheduledEvent, new()
         {
-            Type type = typeof(T);
-            if (_eventPools.TryGetValue(type, out IObjectPool eventPool) == false)
-            {
-                eventPool = new EventPool<T>();
-                _eventPools.Add(type, eventPool);
-            }
+            ushort eventTypeId = EventPool<T>.EventTypeId;
+            if (eventTypeId >= _eventPools.Length)
+                ResizeEventPoolArray();
+
+            ref IObjectPool eventPool = ref _eventPools[eventTypeId];
+            eventPool ??= new EventPool<T>();
 
             return ((EventPool<T>)eventPool).Get();
         }
@@ -37,9 +43,11 @@ namespace MHServerEmu.Games.Events
         /// </summary>
         public void Return(ScheduledEvent @event)
         {
-            // All events returned to the pool need to be created by the pool. If we don't have a node for this type, this event must have been created somewhere else.
-            Type type = @event.GetType();
-            if (!Verify.IsTrue(_eventPools.TryGetValue(type, out IObjectPool eventPool))) return;
+            ushort eventTypeId = @event.EventTypeId;
+            if (!Verify.IsTrue(eventTypeId < _eventPools.Length, LoggingLevel.Error)) return;
+
+            IObjectPool eventPool = _eventPools[eventTypeId];
+            if (!Verify.IsNotNull(eventPool, LoggingLevel.Error)) return;
 
             eventPool.ReturnUnsafe(@event);
         }
@@ -74,12 +82,15 @@ namespace MHServerEmu.Games.Events
             int inactiveSum = 0;
             int totalSum = 0;
 
-            foreach (var kvp in _eventPools.OrderBy(kvp => kvp.Key.Name))
+            foreach (IObjectPool eventPool in _eventPools)
             {
-                string name = kvp.Key.Name;
-                int active = kvp.Value.CountActive;
-                int inactive = kvp.Value.CountInactive;
-                int total = kvp.Value.CountTotal;
+                if (eventPool == null)
+                    continue;
+
+                string name = eventPool.GetType().GenericTypeArguments[0].Name;
+                int active = eventPool.CountActive;
+                int inactive = eventPool.CountInactive;
+                int total = eventPool.CountTotal;
 
                 activeSum += active;
                 inactiveSum += inactive;
@@ -96,13 +107,38 @@ namespace MHServerEmu.Games.Events
             return sb.ToString();
         }
 
-        private sealed class EventPool<T> : ObjectPool<T> where T: ScheduledEvent, new()
+        private void ResizeEventPoolArray()
         {
+            const int InitialSize = 4;
+
+            int size = InitialSize;
+            while (size < _numRegisteredEventTypes)
+                size *= 2;
+
+            Verify.IsTrue(size <= ushort.MaxValue, LoggingLevel.Error);
+
+            if (_eventPools == null)
+                _eventPools = new IObjectPool[size];
+            else if (_eventPools.Length < size)
+                Array.Resize(ref _eventPools, size);
+        }
+
+        private static ushort RegisterEventType()
+        {
+            int eventTypeId = Interlocked.Increment(ref _numRegisteredEventTypes) - 1;
+            Verify.IsTrue(eventTypeId <= ushort.MaxValue, LoggingLevel.Error);
+            return (ushort)eventTypeId;
+        }
+
+        private sealed class EventPool<T> : ObjectPool<T> where T : ScheduledEvent, new()
+        {
+            public static readonly ushort EventTypeId = RegisterEventType();
+
             public EventPool() : base(ObjectPoolFlags.None) { }
 
             protected override T Allocate()
             {
-                return new();
+                return new() { EventTypeId = EventTypeId };
             }
         }
 
