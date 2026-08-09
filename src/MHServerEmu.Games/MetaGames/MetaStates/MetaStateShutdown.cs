@@ -124,7 +124,7 @@ namespace MHServerEmu.Games.MetaGames.MetaStates
             }
 
             if (dialog != null)
-                Game.GameDialogManager.ShowDialog(dialog);
+                Game.GameDialogManager.PostDialogToClient(dialog);
         }
 
         private void OnResponse(ulong playerGuid, DialogResponse response)
@@ -152,7 +152,7 @@ namespace MHServerEmu.Games.MetaGames.MetaStates
         private void RemoveDialog(ulong playerGuid)
         {
             if (_dialogs.TryGetValue(playerGuid, out var dialog))
-                Game.GameDialogManager.RemoveDialog(dialog);
+                Game.GameDialogManager.RemoveDialogFromClient(dialog);
         }
 
         private void SetReadyCheckWidget()

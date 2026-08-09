@@ -381,7 +381,7 @@ namespace MHServerEmu.Games.Entities
 
             Verify.IsTrue(_destinationList.Count <= 2, $"Transition [{this}] has more than 2 destinations, the remaining destinations will not be included in the dialog");
 
-            Game.GameDialogManager.ShowDialog(dialog);            
+            Game.GameDialogManager.PostDialogToClient(dialog);            
         }
 
         private void OnDialogResponse(ulong playerDbId, DialogResponse response)
