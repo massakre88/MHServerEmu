@@ -140,6 +140,11 @@ namespace MHServerEmu.Games.Events
             {
                 return new() { EventTypeId = EventTypeId };
             }
+
+            protected override int GetAllocationWarningThreshold()
+            {
+                return 16384;
+            }
         }
 
         private sealed class EventListPool : ObjectPool<LinkedList<ScheduledEvent>>
@@ -149,6 +154,11 @@ namespace MHServerEmu.Games.Events
             protected override LinkedList<ScheduledEvent> Allocate()
             {
                 return new();
+            }
+
+            protected override int GetAllocationWarningThreshold()
+            {
+                return 16384;
             }
         }
     }

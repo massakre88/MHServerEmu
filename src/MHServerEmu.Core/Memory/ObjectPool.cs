@@ -48,7 +48,12 @@ namespace MHServerEmu.Core.Memory
             {
                 instance = Allocate();
                 _totalAllocatedCount++;
-                Logger.Trace($"Get(): Created a new instance of {typeof(T)} (ThreadId={_threadId}, TotalCount={_totalAllocatedCount})");
+#if DEBUG
+                Logger.Trace($"Get(): Created a new instance of {typeof(T)} (ThreadId={_threadId}, TotalCount={_totalAllocatedCount})", LogChannels.ObjectPool);
+#endif
+                int threshold = GetAllocationWarningThreshold();
+                Verify.IsTrue(threshold <= 0 || _totalAllocatedCount <= threshold,
+                    $"Allocation warning threshold exceeded! This indicates that it needs to be increased or there may be a memory leak.\n\ttype=[{typeof(T)}], count={_totalAllocatedCount}/{threshold}, threadId={_threadId}");
             }
             else
             {
@@ -97,6 +102,11 @@ namespace MHServerEmu.Core.Memory
         protected virtual void OnGet(T instance) { }
 
         protected virtual void OnReturn(T instance) { }
+
+        protected virtual int GetAllocationWarningThreshold()
+        {
+            return 0;   // disabled by default
+        }
     }
 
     public readonly struct ObjectPoolHandle<T> : IDisposable where T: class

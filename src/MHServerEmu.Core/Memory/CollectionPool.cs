@@ -75,6 +75,11 @@ namespace MHServerEmu.Core.Memory
             {
                 instance.Clear();
             }
+
+            protected override int GetAllocationWarningThreshold()
+            {
+                return 32;
+            }
         }
     }
 

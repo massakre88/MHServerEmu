@@ -23,5 +23,10 @@ namespace MHServerEmu.Games.Powers.Conditions
             instance.Clear();
             instance.IsInPool = true;
         }
+
+        protected override int GetAllocationWarningThreshold()
+        {
+            return 16384;
+        }
     }
 }

@@ -77,6 +77,11 @@
             {
                 instance.ResetForPool();
             }
+
+            protected override int GetAllocationWarningThreshold()
+            {
+                return 32;
+            }
         }
     }
 }
