@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using MHServerEmu.Core.Logging;
+using MHServerEmu.Core.Memory;
 
 namespace MHServerEmu.Games.Events
 {
@@ -8,33 +9,13 @@ namespace MHServerEmu.Games.Events
     /// </summary>
     public class ScheduledEventPool
     {
-        private readonly Dictionary<Type, Node> _nodeDict = new();
-
-        private readonly Stack<LinkedList<ScheduledEvent>> _listStack = new();
-        private int _totalListCount = 0;
-
-        /// <summary>
-        /// The number of <see cref="ScheduledEvent"/> instances allocated by this <see cref="ScheduledEventPool"/> that are currently in use.
-        /// </summary>
-        /// <remarks>
-        /// Used primarily as a fast lookup for metrics.
-        /// </remarks>
-        public int ActiveInstanceCount { get; private set; }
+        private readonly Dictionary<Type, IObjectPool> _eventPools = new();
+        private readonly EventListPool _eventListPool = new();
 
         /// <summary>
         /// Constructs a new <see cref="ScheduledEventPool"/> instance.
         /// </summary>
-        public ScheduledEventPool()
-        {
-            // Preallocate some linked lists to store window buckets, each stores 1 frame of events
-            const int StartingListCount = 8192;
-            for (int i = 0; i < StartingListCount; i++)
-            {
-                LinkedList<ScheduledEvent> list = new();
-                _totalListCount++;
-                _listStack.Push(list);
-            }
-        }
+        public ScheduledEventPool() { }
 
         /// <summary>
         /// Retrieves or creates a new <see cref="ScheduledEvent"/> instance of subtype <typeparamref name="T"/>.
@@ -42,15 +23,13 @@ namespace MHServerEmu.Games.Events
         public T Get<T>() where T: ScheduledEvent, new()
         {
             Type type = typeof(T);
-            if (_nodeDict.TryGetValue(type, out Node node) == false)
+            if (_eventPools.TryGetValue(type, out IObjectPool eventPool) == false)
             {
-                node = new();
-                _nodeDict.Add(type, node);
+                eventPool = new EventPool<T>();
+                _eventPools.Add(type, eventPool);
             }
 
-            T @event = node.Get<T>();
-            ActiveInstanceCount++;
-            return @event;
+            return ((EventPool<T>)eventPool).Get();
         }
 
         /// <summary>
@@ -60,10 +39,9 @@ namespace MHServerEmu.Games.Events
         {
             // All events returned to the pool need to be created by the pool. If we don't have a node for this type, this event must have been created somewhere else.
             Type type = @event.GetType();
-            if (!Verify.IsTrue(_nodeDict.TryGetValue(type, out Node node))) return;
+            if (!Verify.IsTrue(_eventPools.TryGetValue(type, out IObjectPool eventPool))) return;
 
-            node.Return(@event);
-            ActiveInstanceCount--;
+            eventPool.ReturnUnsafe(@event);
         }
 
         /// <summary>
@@ -71,19 +49,7 @@ namespace MHServerEmu.Games.Events
         /// </summary>
         public LinkedList<ScheduledEvent> GetList()
         {
-            LinkedList<ScheduledEvent> list;
-
-            if (_listStack.Count == 0)
-            {
-                list = new();
-                _totalListCount++;
-            }
-            else
-            {
-                list = _listStack.Pop();
-            }
-
-            return list;
+            return _eventListPool.Get();
         }
 
         /// <summary>
@@ -91,10 +57,7 @@ namespace MHServerEmu.Games.Events
         /// </summary>
         public void ReturnList(LinkedList<ScheduledEvent> eventList)
         {
-            // Here we accept LinkedList instances created elsewhere (e.g. when constructing WindowBuckets)
-            if (!Verify.IsTrue(eventList.Count == 0)) return;
-
-            _listStack.Push(eventList);
+            _eventListPool.Return(eventList);
         }
 
         /// <summary>
@@ -104,87 +67,52 @@ namespace MHServerEmu.Games.Events
         {
             StringBuilder sb = new();
 
-            sb.AppendLine("Name\tActive\tAvailable\tTotal");
+            sb.AppendLine("Name\tActive\tInactive\tTotal");
 
-            // Accuracy > efficiency here, so recalculate all counts using the data from actual nodes
-            int availableSum = 0;
-            int totalSum = 0;
+            // Accuracy > efficiency here, so recalculate all counts using the data from actual subpools
             int activeSum = 0;
+            int inactiveSum = 0;
+            int totalSum = 0;
 
-            foreach (var kvp in _nodeDict.OrderBy(kvp => kvp.Key.Name))
+            foreach (var kvp in _eventPools.OrderBy(kvp => kvp.Key.Name))
             {
                 string name = kvp.Key.Name;
-                int available = kvp.Value.AvailableCount;
-                int total = kvp.Value.TotalCount;
-                int active = total - available;
+                int active = kvp.Value.CountActive;
+                int inactive = kvp.Value.CountInactive;
+                int total = kvp.Value.CountTotal;
 
-                availableSum += available;
-                totalSum += total;
                 activeSum += active;
+                inactiveSum += inactive;
+                totalSum += total;
 
-                sb.AppendLine($"{name}\t{active}\t{available}\t{total}");
+                sb.AppendLine($"{name}\t{active}\t{inactive}\t{total}");
             }
 
             sb.AppendLine();
-            sb.AppendLine($"TOTAL\t{activeSum}\t{availableSum}\t{totalSum}");
+            sb.AppendLine($"TOTAL\t{activeSum}\t{inactiveSum}\t{totalSum}");
 
-            int availableListCount = _listStack.Count;
-            int activeListCount = _totalListCount - availableListCount;
-            sb.AppendLine($"LinkedListCount\t{activeListCount}\t{availableListCount}\t{_totalListCount}");
+            sb.AppendLine($"EventListPoolCount\t{_eventListPool.CountActive}\t{_eventListPool.CountInactive}\t{_eventListPool.CountTotal}");
 
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Contains <see cref="ScheduledEvent"/> instances of a specific subtype.
-        /// </summary>
-        private class Node
+        private sealed class EventPool<T> : ObjectPool<T> where T: ScheduledEvent, new()
         {
-            private readonly Stack<ScheduledEvent> _stack = new();
+            public EventPool() : base(ObjectPoolFlags.None) { }
 
-            /// <summary>
-            /// The total number of <see cref="ScheduledEvent"/> instances allocated by this <see cref="Node"/>.
-            /// </summary>
-            public int TotalCount { get; private set; }
-
-            /// <summary>
-            /// The number of <see cref="ScheduledEvent"/> instances that have been returned to this <see cref="Node"/> after use.
-            /// </summary>
-            public int AvailableCount { get => _stack.Count; }
-
-            /// <summary>
-            /// Constructs a new <see cref="Node"/> instance.
-            /// </summary>
-            public Node() { }
-
-            /// <summary>
-            /// Retrieves or creates a new <see cref="ScheduledEvent"/> instance of subtype <typeparamref name="T"/>.
-            /// </summary>
-            public T Get<T>() where T: ScheduledEvent, new()
+            protected override T Allocate()
             {
-                T @event;
-
-                if (_stack.Count == 0)
-                {
-                    @event = new();
-                    TotalCount++;
-                }
-                else
-                {
-                    @event = (T)_stack.Pop();
-                }
-
-                return @event;
+                return new();
             }
+        }
 
-            /// <summary>
-            /// Returns a <see cref="ScheduledEvent"/> instance to the pool node.
-            /// </summary>
-            public void Return(ScheduledEvent @event)
+        private sealed class EventListPool : ObjectPool<LinkedList<ScheduledEvent>>
+        {
+            public EventListPool() : base(ObjectPoolFlags.None) { }
+
+            protected override LinkedList<ScheduledEvent> Allocate()
             {
-                // Clear the event before pushing it to the stack to allow GC to collect the things it references
-                @event.Clear();
-                _stack.Push(@event);
+                return new();
             }
         }
     }

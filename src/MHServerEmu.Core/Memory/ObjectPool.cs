@@ -8,7 +8,10 @@ namespace MHServerEmu.Core.Memory
         ThreadLocal     = 1 << 0,
     }
 
-    public abstract class ObjectPool<T> where T: class
+    /// <summary>
+    /// Allocates and stores instances of <typeparamref name="T"/> for reuse.
+    /// </summary>
+    public abstract class ObjectPool<T> : IObjectPool where T: class
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
@@ -21,6 +24,10 @@ namespace MHServerEmu.Core.Memory
 
         private int _totalAllocatedCount = 0;
         private T _lastReturnedInstance = null;
+
+        public int CountTotal { get => _totalAllocatedCount; }
+        public int CountInactive { get => _instances.Count + (_lastReturnedInstance != null ? 1 : 0); }
+        public int CountActive { get => CountTotal - CountInactive; }
 
         public ObjectPool(ObjectPoolFlags flags = ObjectPoolFlags.None)
         {
@@ -78,6 +85,11 @@ namespace MHServerEmu.Core.Memory
                 _lastReturnedInstance = instance;
             else
                 _instances.Add(instance);
+        }
+
+        public void ReturnUnsafe(object instance)
+        {
+            Return((T)instance);
         }
 
         protected abstract T Allocate();
