@@ -4844,6 +4844,11 @@ namespace MHServerEmu.Games.Entities
         {
             protected override CallbackDelegate GetCallback() => (t, p1) => ((WorldEntity)t).ApplyPowerResults(p1);
             public override void OnCancelled() => _param1.Clear();    // Clear to prevent conditions leaking from their pool
+
+            public override string ToString()   // REMOVEME: debug logging
+            {
+                return $"{base.ToString()}, PowerPrototype={_param1?.PowerPrototype}";
+            }
         }
 
         private class NegateHotspotsEvent : CallMethodEvent<Entity>
